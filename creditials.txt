@@ -1,0 +1,4 @@
+# Формат: email:password
+# Замените на свои аккаунты
+
+your_email@rambler.ru:your_password
