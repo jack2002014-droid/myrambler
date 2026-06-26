@@ -1,15 +1,42 @@
 import re
 import os
 import sys
+import json
 import webbrowser
-import pyperclip
 from datetime import datetime, timedelta, timezone
 from imap_tools import MailBox, A
 from html.parser import HTMLParser
 
-os.chdir(os.path.dirname(sys.executable))
+try:
+    import pyperclip
+except ImportError:
+    print('Ошибка: не установлена библиотека pyperclip')
+    print('Установите: pip install pyperclip')
+    input('\nEnter, чтобы выйти...')
+    sys.exit(1)
 
-auto_mode = False
+if getattr(sys, 'frozen', False):
+    os.chdir(os.path.dirname(sys.executable))
+else:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+AUTO_MODE_FILE = 'auto_mode.json'
+
+
+def load_auto_mode():
+    try:
+        with open(AUTO_MODE_FILE) as f:
+            return json.load(f).get('enabled', False)
+    except Exception:
+        return False
+
+
+def save_auto_mode(enabled):
+    with open(AUTO_MODE_FILE, 'w') as f:
+        json.dump({'enabled': enabled}, f)
+
+
+auto_mode = load_auto_mode()
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -57,6 +84,7 @@ def extract_code(text, html=''):
 def actions(account_login, account_password):
     global auto_mode
     clear()
+    print(f'Подключаюсь к {account_login}...')
     try:
         mailbox = MailBox('imap.rambler.ru').login(account_login, account_password)
     except Exception as e:
@@ -64,6 +92,7 @@ def actions(account_login, account_password):
         input()
         return
 
+    print('Загружаю письма за последние 24 часа...')
     date_from = (datetime.now(timezone.utc) - timedelta(hours=24)).date()
     messages = []
     for msg in mailbox.fetch(A(date_gte=date_from)):
@@ -89,19 +118,41 @@ def actions(account_login, account_password):
         return
 
     # Ручной режим
+    page = 0
+    page_size = 20
     while True:
         clear()
         if not messages:
-            print(f'[{account_login}]\n\nНет писем за последние 24 часа\n\n[0] Вернуться\n')
-            if input('Выбор: ') == '0':
+            print(f'[{account_login}]\n\nНет писем за последние 24 часа\n\n[R] Обновить\n[0] Вернуться\n')
+            choice = input('Выбор: ').strip().lower()
+            if choice == '0':
                 return
+            if choice == 'r':
+                print('Обновляю список писем...')
+                date_from = (datetime.now(timezone.utc) - timedelta(hours=24)).date()
+                messages = []
+                for msg in mailbox.fetch(A(date_gte=date_from)):
+                    messages.append((msg.uid, msg.subject, msg.date, msg.text, msg.html))
+                messages.reverse()
             continue
+
+        total_pages = (len(messages) + page_size - 1) // page_size
+        start = page * page_size
+        end = min(start + page_size, len(messages))
+        page_messages = messages[start:end]
 
         messages_text = '\n'.join(
             f'[{i + 1}] {messages[i][2].strftime("%H:%M") if messages[i][2] else "??:??"} | {messages[i][1]}'
-            for i in range(len(messages))
+            for i in range(start, end)
         )
-        print(f'[{account_login}]\n\n{messages_text}\n\n[A] Авто — последнее письмо\n[0] Вернуться\n')
+
+        nav = ''
+        if page > 0:
+            nav += ' [P] Назад'
+        if page < total_pages - 1:
+            nav += ' [N] Вперёд'
+
+        print(f'[{account_login}] (стр. {page + 1}/{total_pages})\n\n{messages_text}\n\n{nav}\n[A] Авто — последнее письмо\n[R] Обновить\n[0] Вернуться\n')
         choice = input('Выбор: ').strip()
 
         if choice == '0':
@@ -109,6 +160,21 @@ def actions(account_login, account_password):
 
         if choice.lower() == 'a':
             idx = 0
+        elif choice.lower() == 'r':
+            print('Обновляю список писем...')
+            date_from = (datetime.now(timezone.utc) - timedelta(hours=24)).date()
+            messages = []
+            for msg in mailbox.fetch(A(date_gte=date_from)):
+                messages.append((msg.uid, msg.subject, msg.date, msg.text, msg.html))
+            messages.reverse()
+            page = 0
+            continue
+        elif choice.lower() == 'p' and page > 0:
+            page -= 1
+            continue
+        elif choice.lower() == 'n' and page < total_pages - 1:
+            page += 1
+            continue
         else:
             try:
                 idx = int(choice) - 1
@@ -129,9 +195,10 @@ def actions(account_login, account_password):
         else:
             print('  Код не найден автоматически, открываю браузер...')
             try:
-                with open('message.html', 'w', encoding='utf-8') as file:
+                filename = f'message_{uid}.html'
+                with open(filename, 'w', encoding='utf-8') as file:
                     file.write(html or text or 'Нет содержимого')
-                webbrowser.open(f'file:///{os.getcwd()}/message.html')
+                webbrowser.open(f'file:///{os.getcwd()}/{filename}')
             except Exception as e:
                 print(f'Ошибка: {e}')
 
@@ -143,6 +210,10 @@ def main():
     accounts = get_accounts()
     while True:
         clear()
+        if not accounts:
+            print('Нет аккаунтов. Добавьте их в creditials.txt в формате email:password\n')
+            input('Enter, чтобы выйти...')
+            return
         auto_status = 'ВКЛ ✓' if auto_mode else 'ВЫКЛ'
         accounts_text = '\n'.join(f'[{i + 1}] {accounts[i][0]}' for i in range(len(accounts)))
         print(f'[Выбор аккаунта] [Авто-режим: {auto_status}]\n\n{accounts_text}\n\n[A] Переключить авто-режим\n[0] Выйти\n')
@@ -153,6 +224,7 @@ def main():
 
         if choice.lower() == 'a':
             auto_mode = not auto_mode
+            save_auto_mode(auto_mode)
             continue
 
         try:

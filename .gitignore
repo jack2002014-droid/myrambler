@@ -1,4 +1,5 @@
-ramb.exe
-message.html
+﻿ramb.exe
+message_*.html
 __pycache__/
 *.pyc
+auto_mode.json
