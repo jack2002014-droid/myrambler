@@ -1,5 +1,14 @@
-﻿ramb.exe
+# пароли и локальное состояние — никогда в git
+credentials.txt
+creditials.txt
+history.json
+auto_mode.json
 message_*.html
+
+# python / сборка
 __pycache__/
 *.pyc
-auto_mode.json
+build/
+dist/
+*.spec
+*.log

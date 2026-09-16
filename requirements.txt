@@ -1,2 +1,3 @@
 imap-tools
 pyperclip
+colorama
